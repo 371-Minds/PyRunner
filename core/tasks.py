@@ -5,7 +5,11 @@ This module contains task functions that are executed asynchronously
 by django-q2 workers.
 """
 
+import json
 import logging
+import time
+import urllib.error
+import urllib.request
 from uuid import UUID
 
 from django.utils import timezone
@@ -16,7 +20,7 @@ from core.models import Run, Script, ScriptSchedule, GlobalSettings, PackageOper
 logger = logging.getLogger(__name__)
 
 
-def execute_run_task(run_id: str, webhook_data: dict | None = None) -> dict:
+def execute_run_task(run_id: str, webhook_data: dict | None = None, api_data: dict | None = None) -> dict:
     """
     Execute a script run asynchronously.
 
@@ -26,6 +30,7 @@ def execute_run_task(run_id: str, webhook_data: dict | None = None) -> dict:
     Args:
         run_id: The UUID of the Run record (as string)
         webhook_data: Optional webhook data to inject as environment variables
+        api_data: Optional API agent data (inputs, context, agent_id, session_id)
 
     Returns:
         dict: Execution result summary for logging/monitoring
@@ -52,7 +57,7 @@ def execute_run_task(run_id: str, webhook_data: dict | None = None) -> dict:
             "error": f"Invalid UUID format: {e}",
         }
 
-    execute_run(run, webhook_data=webhook_data)
+    execute_run(run, webhook_data=webhook_data, api_data=api_data)
     run.refresh_from_db()
 
     # Send notifications after run completion
@@ -62,6 +67,13 @@ def execute_run_task(run_id: str, webhook_data: dict | None = None) -> dict:
             logger.info(f"Notifications sent for run {run_id}: {notification_results}")
     except Exception as e:
         logger.error(f"Failed to send notifications for run {run_id}: {e}")
+
+    # Deliver callback if configured
+    if run.callback_url:
+        try:
+            deliver_callback_task(run_id=run_id)
+        except Exception as e:
+            logger.error(f"Failed to queue callback delivery for run {run_id}: {e}")
 
     logger.info(f"Task completed for Run {run_id} with status {run.status}")
 
@@ -73,7 +85,7 @@ def execute_run_task(run_id: str, webhook_data: dict | None = None) -> dict:
     }
 
 
-def queue_script_run(run: Run, webhook_data: dict | None = None) -> str:
+def queue_script_run(run: Run, webhook_data: dict | None = None, api_data: dict | None = None) -> str:
     """
     Queue a Run for async execution.
 
@@ -83,6 +95,7 @@ def queue_script_run(run: Run, webhook_data: dict | None = None) -> str:
     Args:
         run: The Run model instance to execute
         webhook_data: Optional webhook data to inject as environment variables
+        api_data: Optional API agent data (inputs, context, agent_id, session_id)
 
     Returns:
         str: The django-q2 task ID
@@ -99,6 +112,7 @@ def queue_script_run(run: Run, webhook_data: dict | None = None) -> str:
         "core.tasks.execute_run_task",
         str(run.id),
         webhook_data,
+        api_data,
         task_name=f"run-{run.id}",
         timeout=run.script.timeout_seconds + 60,
     )
@@ -411,3 +425,115 @@ def scheduled_backup_task() -> dict:
 
         logger.exception("Scheduled backup task failed")
         return {"success": False, "error": str(e)}
+
+
+def deliver_callback_task(run_id: str) -> dict:
+    """
+    Deliver a completion callback to a URL registered on the Run.
+
+    Called synchronously from ``execute_run_task`` after the run completes.
+    Retries up to 3 times with exponential back-off (2 s, 4 s, 8 s).
+
+    The callback payload follows a standardised schema compatible with
+    LangChain, AutoGen, and CrewAI callback conventions::
+
+        {
+            "run_id":          "<uuid>",
+            "script_id":       "<uuid>",
+            "script_name":     "...",
+            "status":          "success|failed|timeout|cancelled",
+            "exit_code":       0,
+            "agent_id":        "...",
+            "session_id":      "...",
+            "structured_output": {...},
+            "duration_seconds": 1.23,
+            "started_at":      "2026-...",
+            "ended_at":        "2026-..."
+        }
+
+    Args:
+        run_id: UUID string of the completed Run.
+
+    Returns:
+        dict with keys ``success`` and optionally ``error``.
+    """
+    try:
+        run = Run.objects.select_related("script").get(id=UUID(run_id))
+    except (Run.DoesNotExist, ValueError) as e:
+        logger.error(f"deliver_callback_task: run {run_id} not found: {e}")
+        return {"success": False, "error": str(e)}
+
+    callback_url = run.callback_url
+    if not callback_url:
+        return {"success": True, "skipped": "no callback_url"}
+
+    # Defence-in-depth: re-validate the stored callback URL before making the
+    # outbound request to prevent SSRF even if validation was bypassed upstream.
+    from core.views.api.scripts import _validate_callback_url
+    ssrf_error = _validate_callback_url(callback_url)
+    if ssrf_error:
+        logger.error(
+            f"deliver_callback_task: rejecting unsafe callback_url for run {run_id}: {ssrf_error}"
+        )
+        return {"success": False, "error": f"Unsafe callback URL: {ssrf_error}"}
+
+    payload = {
+        "run_id": str(run.id),
+        "script_id": str(run.script_id),
+        "script_name": run.script.name if run.script else None,
+        "status": run.status,
+        "exit_code": run.exit_code,
+        "agent_id": run.agent_id,
+        "session_id": run.session_id,
+        "structured_output": run.structured_output,
+        "duration_seconds": run.duration,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "PyRunner/1.0 (callback)",
+    }
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            req = urllib.request.Request(
+                callback_url,
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            # 10-second timeout — don't block the worker indefinitely
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                status_code = resp.getcode()
+                logger.info(
+                    f"Callback delivered for run {run_id} to {callback_url} "
+                    f"(HTTP {status_code}, attempt {attempt})"
+                )
+                return {"success": True, "status_code": status_code}
+
+        except urllib.error.HTTPError as e:
+            logger.warning(
+                f"Callback HTTP error for run {run_id} (attempt {attempt}/{max_attempts}): "
+                f"HTTP {e.code} from {callback_url}"
+            )
+            if attempt == max_attempts:
+                return {"success": False, "error": f"HTTP {e.code}"}
+
+        except Exception as e:
+            logger.warning(
+                f"Callback delivery error for run {run_id} (attempt {attempt}/{max_attempts}): {e}"
+            )
+            if attempt == max_attempts:
+                return {"success": False, "error": str(e)}
+
+        # Exponential back-off before next retry: 2s after attempt 1, 4s after attempt 2.
+        # No sleep after the final attempt.
+        if attempt < max_attempts:
+            time.sleep(2 ** attempt)
+
+    return {"success": False, "error": "Max retries exceeded"}
+

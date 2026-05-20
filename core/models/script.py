@@ -100,6 +100,37 @@ class Script(models.Model):
         help_text="Override global retention count for this script",
     )
 
+    # Agent / AI automation fields
+    class Category(models.TextChoices):
+        GENERAL = "general", "General"
+        DATA = "data", "Data"
+        INTEGRATION = "integration", "Integration"
+        AI = "ai", "AI"
+        UTILITY = "utility", "Utility"
+
+    category = models.CharField(
+        max_length=20,
+        choices=Category.choices,
+        default=Category.GENERAL,
+        help_text="Script category for agent discovery and filtering",
+    )
+    is_template = models.BooleanField(
+        default=False,
+        help_text="Template scripts can be discovered by agents but cannot be triggered via API",
+    )
+    api_execution_enabled = models.BooleanField(
+        default=True,
+        help_text="Allow this script to be triggered via the REST API",
+    )
+    input_schema = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional JSON Schema describing expected inputs for this script. "
+            "Agents use this to know what to pass when triggering the script."
+        ),
+    )
+
     # Archive fields (soft delete)
     archived_at = models.DateTimeField(
         null=True,

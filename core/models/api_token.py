@@ -69,6 +69,26 @@ class DataStoreAPIToken(models.Model):
         help_text="Inactive tokens cannot be used for API access",
     )
 
+    # Scope flags — control which API surfaces this token can access.
+    # Existing tokens (created before scopes were added) default to True for
+    # datastores_read so they keep working without any migration touch.
+    scope_scripts = models.BooleanField(
+        default=False,
+        help_text="Allow listing and triggering scripts via the API",
+    )
+    scope_datastores_read = models.BooleanField(
+        default=True,
+        help_text="Allow reading datastore entries via the API",
+    )
+    scope_datastores_write = models.BooleanField(
+        default=False,
+        help_text="Allow creating/updating/deleting datastore entries via the API",
+    )
+    scope_runs_read = models.BooleanField(
+        default=False,
+        help_text="Allow reading run status and output via the API",
+    )
+
     class Meta:
         db_table = "datastore_api_tokens"
         verbose_name = "API token"

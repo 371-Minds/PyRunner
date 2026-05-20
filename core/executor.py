@@ -8,6 +8,7 @@ It is designed to be called from django-q2 async tasks.
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import traceback
@@ -51,16 +52,24 @@ def _get_secrets_env() -> dict:
     return secrets_env
 
 
-def _build_script_environment(webhook_data: dict | None = None) -> dict:
+def _build_script_environment(
+    webhook_data: dict | None = None,
+    api_data: dict | None = None,
+    output_path: str | None = None,
+) -> dict:
     """
     Build the environment dict for script execution.
 
-    Combines system environment with secrets, webhook data, and DataStore access.
-    Secrets override any same-named system variables.
+    Combines system environment with secrets, webhook data, API agent data,
+    and DataStore access.  Secrets override any same-named system variables.
     Webhook data is added with WEBHOOK_ prefix.
+    API agent data is added as PYRUNNER_INPUT, PYRUNNER_CONTEXT, and
+    individual INPUT_<KEY> vars.
 
     Args:
         webhook_data: Optional webhook data from HTTP request
+        api_data:     Optional agent API data (inputs, context, agent_id, session_id)
+        output_path:  Path for the script to write structured output JSON
 
     Returns:
         Environment dict to pass to subprocess
@@ -83,6 +92,32 @@ def _build_script_environment(webhook_data: dict | None = None) -> dict:
 
         if "body_json" in webhook_data:
             env["WEBHOOK_BODY_JSON"] = json.dumps(webhook_data["body_json"])
+
+    # Add API agent data if present
+    if api_data:
+        inputs = api_data.get("inputs") or {}
+        context = api_data.get("context") or {}
+
+        # Structured input/context as JSON strings
+        env["PYRUNNER_INPUT"] = json.dumps(inputs)
+        env["PYRUNNER_CONTEXT"] = json.dumps(context)
+
+        # Convenience: individual INPUT_<KEY> vars (strings only).
+        # Sanitize key: uppercase, replace all non-alphanumeric chars with underscore.
+        _non_word_re = re.compile(r'[^A-Z0-9]')
+        for k, v in inputs.items():
+            safe_key = _non_word_re.sub("_", k.upper())
+            env[f"INPUT_{safe_key}"] = str(v)
+
+        # Agent traceability vars
+        if api_data.get("agent_id"):
+            env["PYRUNNER_AGENT_ID"] = str(api_data["agent_id"])
+        if api_data.get("session_id"):
+            env["PYRUNNER_SESSION_ID"] = str(api_data["session_id"])
+
+    # Structured output path (for pyrunner_output helper)
+    if output_path:
+        env["PYRUNNER_OUTPUT_PATH"] = output_path
 
     # Add DataStore support
     # Set the database path for the pyrunner_datastore module
@@ -193,7 +228,7 @@ def _validate_environment(run: Run) -> str:
     return python_path
 
 
-def execute_run(run: Run, webhook_data: dict | None = None) -> None:
+def execute_run(run: Run, webhook_data: dict | None = None, api_data: dict | None = None) -> None:
     """
     Execute a script run and update the Run record with results.
 
@@ -203,11 +238,13 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
     - Running the script with the appropriate Python executable
     - Capturing stdout/stderr
     - Handling timeouts
+    - Reading structured output written by pyrunner_output helpers
     - Updating the Run record with results
 
     Args:
         run: The Run model instance to execute
         webhook_data: Optional webhook data to inject as environment variables
+        api_data: Optional API agent data (inputs, context, agent_id, session_id)
 
     Note:
         This function always saves the Run state, even on errors.
@@ -215,6 +252,7 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
         SUCCESS, FAILED, TIMEOUT, or remain FAILED on errors.
     """
     script_file_path = None
+    output_file_path = None
 
     try:
         # Phase 1: Pre-execution validation
@@ -266,13 +304,27 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
             script_file.write(code)
             script_file_path = script_file.name
 
+        # Create a temp file for structured output (pyrunner_output helper)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+            dir=str(workdir),
+        ) as output_file:
+            output_file_path = output_file.name
+
         # Phase 3: Execute script
         try:
             # Build subprocess arguments
             cmd = [python_path, script_file_path]
 
-            # Build environment with secrets and webhook data injected
-            script_env = _build_script_environment(webhook_data)
+            # Build environment with secrets, webhook data, and API agent data
+            script_env = _build_script_environment(
+                webhook_data=webhook_data,
+                api_data=api_data,
+                output_path=output_file_path,
+            )
             secrets = _get_secrets_env()
 
             # Subprocess kwargs
@@ -342,15 +394,31 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
         if not run.ended_at:
             run.ended_at = timezone.now()
 
+        # Read structured output written by pyrunner_output helper
+        if output_file_path is not None:
+            try:
+                with open(output_file_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        run.structured_output = json.loads(content)
+            except (OSError, json.JSONDecodeError):
+                pass  # No output written, or invalid JSON — that's fine
+
         # Always save the run state
         run.save()
 
-        # Cleanup temporary file
+        # Cleanup temporary files
         if script_file_path is not None:
             try:
                 os.unlink(script_file_path)
             except OSError as e:
                 logger.warning(f"Failed to delete temp script file: {e}")
+
+        if output_file_path is not None:
+            try:
+                os.unlink(output_file_path)
+            except OSError as e:
+                logger.warning(f"Failed to delete temp output file: {e}")
 
         logger.info(
             f"Run {run.id} completed with status {run.status} "
