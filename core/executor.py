@@ -131,7 +131,6 @@ def _build_script_environment(
     return env
 
 
-
 def _mask_secrets_in_output(output: str, secrets: dict) -> str:
     """
     Mask secret values in output to prevent accidental exposure.

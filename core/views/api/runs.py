@@ -194,8 +194,11 @@ def cancel_run(request: HttpRequest, run_id: str) -> JsonResponse:
         success, msg = TaskService.force_stop_task(run.task_id or str(run.id))
 
     if not success:
+        # Log full error details internally; return a generic message to avoid
+        # exposing internal stack-trace information to the caller.
+        logger.error(f"Cancel run {run_id} failed: {msg}")
         response = JsonResponse(
-            {"error": {"code": "CANCEL_FAILED", "message": msg}},
+            {"error": {"code": "CANCEL_FAILED", "message": "Failed to cancel the run. Check server logs for details."}},
             status=500,
         )
         return add_cors_headers(response, "POST, OPTIONS")

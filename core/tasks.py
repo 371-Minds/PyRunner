@@ -467,6 +467,16 @@ def deliver_callback_task(run_id: str) -> dict:
     if not callback_url:
         return {"success": True, "skipped": "no callback_url"}
 
+    # Defence-in-depth: re-validate the stored callback URL before making the
+    # outbound request to prevent SSRF even if validation was bypassed upstream.
+    from core.views.api.scripts import _validate_callback_url
+    ssrf_error = _validate_callback_url(callback_url)
+    if ssrf_error:
+        logger.error(
+            f"deliver_callback_task: rejecting unsafe callback_url for run {run_id}: {ssrf_error}"
+        )
+        return {"success": False, "error": f"Unsafe callback URL: {ssrf_error}"}
+
     payload = {
         "run_id": str(run.id),
         "script_id": str(run.script_id),

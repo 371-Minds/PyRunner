@@ -2,8 +2,10 @@
 API views for script management and execution.
 """
 
+import ipaddress
 import json
 import logging
+import urllib.parse
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
@@ -215,6 +217,17 @@ def trigger_script(request: HttpRequest, script_id: str) -> JsonResponse:
     callback_url = str(body.get("callback_url", ""))[:500]
     trigger_script_id = body.get("trigger_script_id")
 
+    # Validate callback_url to prevent SSRF — must be an HTTPS/HTTP URL pointing
+    # to a public (non-private/loopback) address.
+    if callback_url:
+        ssrf_error = _validate_callback_url(callback_url)
+        if ssrf_error:
+            response = JsonResponse(
+                {"error": {"code": "INVALID_CALLBACK_URL", "message": ssrf_error}},
+                status=400,
+            )
+            return add_cors_headers(response, "POST, OPTIONS")
+
     # Validate inputs against input_schema if provided
     if script.input_schema and inputs:
         error = _validate_inputs(inputs, script.input_schema)
@@ -225,10 +238,11 @@ def trigger_script(request: HttpRequest, script_id: str) -> JsonResponse:
             )
             return add_cors_headers(response, "POST, OPTIONS")
 
-    # Concurrent run limit per token
+    # Concurrent run limit per token — count only API-triggered runs currently
+    # in PENDING or RUNNING state that were initiated via the API.
     token = request.api_token
     concurrent = Run.objects.filter(
-        task_id__isnull=False,
+        trigger_type=Run.TriggerType.API,
         status__in=[Run.Status.PENDING, Run.Status.RUNNING],
     ).count()
     if concurrent >= MAX_CONCURRENT_RUNS_PER_TOKEN:
@@ -457,5 +471,47 @@ def _validate_inputs(inputs: dict, schema: dict) -> str | None:
         expected_python = type_map.get(expected_type)
         if expected_python and not isinstance(value, expected_python):
             return f"Input '{field}' must be of type '{expected_type}'"
+
+    return None
+
+
+def _validate_callback_url(url: str) -> str | None:
+    """
+    Validate a callback URL to prevent SSRF attacks.
+
+    Rules:
+    - Must be http:// or https://
+    - Must have a non-empty hostname
+    - Must not resolve to a loopback, link-local, or private-network address
+
+    Returns an error message string on failure, or None if the URL is safe.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return "callback_url is not a valid URL"
+
+    if parsed.scheme not in ("http", "https"):
+        return "callback_url must use http or https scheme"
+
+    hostname = parsed.hostname
+    if not hostname:
+        return "callback_url must have a valid hostname"
+
+    # Block IP-literal addresses that point to private/loopback ranges
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_reserved:
+            return "callback_url must not point to a private or loopback address"
+    except ValueError:
+        # Not an IP literal — it's a domain name; apply basic sanity checks
+        # We don't do DNS resolution here (that would be a pre-connect SSRF
+        # check, but DNS is mutable).  Deployers can add network-level egress
+        # controls for stricter enforcement.
+        lower = hostname.lower()
+        if lower in ("localhost", "ip6-localhost", "ip6-loopback"):
+            return "callback_url must not point to localhost"
+        if lower.endswith(".local") or lower.endswith(".internal"):
+            return "callback_url must not point to a private network hostname"
 
     return None

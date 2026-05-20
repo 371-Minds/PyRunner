@@ -305,8 +305,7 @@ def _upsert_entry(request: HttpRequest, name: str) -> JsonResponse:
     if isinstance(datastore, JsonResponse):
         return datastore
 
-    import json as _json
-    value_json = _json.dumps(body["value"])
+    value_json = json.dumps(body["value"])
     entry, created = DataStoreEntry.objects.update_or_create(
         datastore=datastore,
         key=key,
@@ -423,8 +422,7 @@ def _update_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
         )
         return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
 
-    import json as _json
-    entry.value_json = _json.dumps(body["value"])
+    entry.value_json = json.dumps(body["value"])
     entry.save()
 
     data = {
