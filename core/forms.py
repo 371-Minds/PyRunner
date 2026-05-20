@@ -1814,6 +1814,139 @@ class S3SettingsForm(forms.Form):
         return instance
 
 
+class TrelloSettingsForm(forms.Form):
+    """Form for Trello board synchronization configuration."""
+
+    trello_enabled = forms.BooleanField(
+        required=False,
+        initial=False,
+        widget=forms.CheckboxInput(
+            attrs={
+                "class": "w-5 h-5 text-code-accent bg-code-bg border-code-border rounded focus:ring-code-accent focus:ring-2",
+            }
+        ),
+        label="Enable Trello Sync",
+    )
+
+    trello_api_key = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(
+            attrs={
+                "class": INPUT_CLASS,
+                "placeholder": "Leave blank to keep current",
+                "autocomplete": "new-password",
+            }
+        ),
+        label="Trello API Key",
+    )
+
+    trello_token = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(
+            attrs={
+                "class": INPUT_CLASS,
+                "placeholder": "Leave blank to keep current",
+                "autocomplete": "new-password",
+            }
+        ),
+        label="Trello Token",
+    )
+
+    trello_board_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": INPUT_CLASS,
+                "placeholder": "Board ID",
+            }
+        ),
+        label="Board ID",
+    )
+
+    trello_list_queued_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASS, "placeholder": "Queued list ID"}),
+        label="Queued List ID",
+    )
+
+    trello_list_running_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASS, "placeholder": "Running list ID"}),
+        label="Running List ID",
+    )
+
+    trello_list_success_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASS, "placeholder": "Success list ID"}),
+        label="Success List ID",
+    )
+
+    trello_list_failed_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASS, "placeholder": "Failed list ID"}),
+        label="Failed List ID",
+    )
+
+    def __init__(self, *args, instance=None, **kwargs):
+        """Initialize form with existing Trello settings."""
+        super().__init__(*args, **kwargs)
+        if instance:
+            self.fields["trello_enabled"].initial = instance.trello_enabled
+            self.fields["trello_board_id"].initial = instance.trello_board_id
+            self.fields["trello_list_queued_id"].initial = instance.trello_list_queued_id
+            self.fields["trello_list_running_id"].initial = instance.trello_list_running_id
+            self.fields["trello_list_success_id"].initial = instance.trello_list_success_id
+            self.fields["trello_list_failed_id"].initial = instance.trello_list_failed_id
+
+    def clean(self):
+        cleaned_data = super().clean()
+        enabled = cleaned_data.get("trello_enabled")
+
+        if not enabled:
+            return cleaned_data
+
+        required_fields = [
+            "trello_board_id",
+            "trello_list_queued_id",
+            "trello_list_running_id",
+            "trello_list_success_id",
+            "trello_list_failed_id",
+        ]
+
+        for field in required_fields:
+            if not cleaned_data.get(field):
+                self.add_error(field, "This field is required when Trello sync is enabled.")
+
+        return cleaned_data
+
+    def save(self, instance):
+        """Save the Trello settings to the GlobalSettings instance."""
+        from core.services.encryption_service import EncryptionService
+
+        instance.trello_enabled = self.cleaned_data.get("trello_enabled", False)
+        instance.trello_board_id = self.cleaned_data.get("trello_board_id") or ""
+        instance.trello_list_queued_id = self.cleaned_data.get("trello_list_queued_id") or ""
+        instance.trello_list_running_id = self.cleaned_data.get("trello_list_running_id") or ""
+        instance.trello_list_success_id = self.cleaned_data.get("trello_list_success_id") or ""
+        instance.trello_list_failed_id = self.cleaned_data.get("trello_list_failed_id") or ""
+
+        api_key = self.cleaned_data.get("trello_api_key")
+        if api_key:
+            instance.trello_api_key_encrypted = EncryptionService.encrypt(api_key)
+
+        token = self.cleaned_data.get("trello_token")
+        if token:
+            instance.trello_token_encrypted = EncryptionService.encrypt(token)
+
+        instance.save()
+        return instance
+
+
 class S3BackupScheduleForm(forms.Form):
     """Form for S3 scheduled backup configuration."""
 

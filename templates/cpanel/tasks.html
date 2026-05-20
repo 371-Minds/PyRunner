@@ -14,6 +14,10 @@
                 <p class="text-code-muted">Monitor and manage Django-Q2 tasks</p>
             </div>
             <div class="flex items-center space-x-4">
+                <a href="{% url 'cpanel:tasks_board' %}"
+                   class="px-4 py-2 bg-code-bg border border-code-border hover:border-code-accent text-code-text text-sm rounded-lg transition-colors">
+                    Board View
+                </a>
                 <!-- Auto-refresh toggle -->
                 <label class="flex items-center space-x-2 text-sm text-code-muted cursor-pointer">
                     <input type="checkbox"

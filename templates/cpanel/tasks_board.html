@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Task Board - PyRunner{% endblock %}
+
+{% block content %}
+<div class="flex">
+    {% include "cpanel/_sidebar.html" %}
+
+    <div class="flex-1 p-8">
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-code-text">Task Board</h1>
+                <p class="text-code-muted">Kanban view for queued and completed runs</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="{% url 'cpanel:tasks' %}"
+                   class="px-4 py-2 bg-code-bg border border-code-border hover:border-code-accent text-code-text text-sm rounded-lg transition-colors">
+                    List View
+                </a>
+            </div>
+        </div>
+
+        <div class="bg-code-surface border border-code-border rounded-xl p-4 mb-6 flex items-end justify-between gap-4">
+            <form method="get" class="flex items-end gap-3">
+                <div>
+                    <label class="block text-xs text-code-muted mb-1">Project (Tag)</label>
+                    <select name="project"
+                            class="px-3 py-2 bg-code-bg border border-code-border rounded-lg text-code-text text-sm focus:outline-none focus:ring-2 focus:ring-code-accent/50">
+                        <option value="">All Projects</option>
+                        {% for tag in tags %}
+                        <option value="{{ tag.id }}" {% if project_tag == tag.id|stringformat:"s" %}selected{% endif %}>{{ tag.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit"
+                        class="px-4 py-2 bg-code-accent hover:bg-code-accent/90 text-white text-sm font-medium rounded-lg transition-colors">
+                    Filter
+                </button>
+            </form>
+
+            <label class="flex items-center gap-2 text-sm text-code-muted cursor-pointer">
+                <input type="checkbox"
+                       id="auto-refresh"
+                       class="w-4 h-4 text-code-accent bg-code-bg border-code-border rounded focus:ring-code-accent">
+                <span>Auto-refresh</span>
+            </label>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
+            <div class="bg-code-surface border border-code-border rounded-xl">
+                <div class="px-4 py-3 border-b border-code-border flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-code-text">Queued</h2>
+                    <span class="px-2 py-0.5 text-xs rounded bg-code-accent/20 text-code-accent">{{ board.queued|length }}</span>
+                </div>
+                <div class="p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+                    {% for item in board.queued %}
+                    <div class="bg-code-bg border border-code-border rounded-lg p-3">
+                        <div class="text-sm font-semibold text-code-text truncate">{{ item.script_name }}</div>
+                        <div class="text-xs text-code-muted mt-1">Task: {{ item.task_id|truncatechars:18 }}</div>
+                        {% if item.run_id %}
+                        <a href="{% url 'cpanel:run_detail' pk=item.run_id %}" class="text-xs text-code-accent hover:underline mt-2 inline-block">Open run</a>
+                        {% endif %}
+                        {% if item.tags %}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            {% for tag in item.tags %}
+                            <span class="px-2 py-0.5 text-[10px] rounded bg-code-border/40 text-code-text">{{ tag.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-sm text-code-muted p-2">No queued tasks.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="bg-code-surface border border-code-border rounded-xl">
+                <div class="px-4 py-3 border-b border-code-border flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-code-text">Running</h2>
+                    <span class="px-2 py-0.5 text-xs rounded bg-code-yellow/20 text-code-yellow">{{ board.running|length }}</span>
+                </div>
+                <div class="p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+                    {% for item in board.running %}
+                    <div class="bg-code-bg border border-code-border rounded-lg p-3">
+                        <div class="text-sm font-semibold text-code-text truncate">{{ item.script_name }}</div>
+                        <div class="text-xs text-code-muted mt-1">Run: {{ item.run_id|truncatechars:18 }}</div>
+                        <a href="{% url 'cpanel:run_detail' pk=item.run_id %}" class="text-xs text-code-accent hover:underline mt-2 inline-block">Open run</a>
+                        {% if item.tags %}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            {% for tag in item.tags %}
+                            <span class="px-2 py-0.5 text-[10px] rounded bg-code-border/40 text-code-text">{{ tag.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-sm text-code-muted p-2">No running tasks.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="bg-code-surface border border-code-border rounded-xl">
+                <div class="px-4 py-3 border-b border-code-border flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-code-text">Success</h2>
+                    <span class="px-2 py-0.5 text-xs rounded bg-code-green/20 text-code-green">{{ board.success|length }}</span>
+                </div>
+                <div class="p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+                    {% for item in board.success %}
+                    <div class="bg-code-bg border border-code-border rounded-lg p-3">
+                        <div class="text-sm font-semibold text-code-text truncate">{{ item.script_name }}</div>
+                        <div class="text-xs text-code-muted mt-1">Duration: {{ item.duration_display }}</div>
+                        <a href="{% url 'cpanel:run_detail' pk=item.run_id %}" class="text-xs text-code-accent hover:underline mt-2 inline-block">Open run</a>
+                        {% if item.tags %}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            {% for tag in item.tags %}
+                            <span class="px-2 py-0.5 text-[10px] rounded bg-code-border/40 text-code-text">{{ tag.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-sm text-code-muted p-2">No successful runs.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="bg-code-surface border border-code-border rounded-xl">
+                <div class="px-4 py-3 border-b border-code-border flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-code-text">Failed / Timeout / Cancelled</h2>
+                    <span class="px-2 py-0.5 text-xs rounded bg-code-red/20 text-code-red">{{ board.failed|length }}</span>
+                </div>
+                <div class="p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+                    {% for item in board.failed %}
+                    <div class="bg-code-bg border border-code-border rounded-lg p-3">
+                        <div class="text-sm font-semibold text-code-text truncate">{{ item.script_name }}</div>
+                        <div class="text-xs text-code-muted mt-1 uppercase">{{ item.status }}</div>
+                        <a href="{% url 'cpanel:run_detail' pk=item.run_id %}" class="text-xs text-code-accent hover:underline mt-2 inline-block">Open run</a>
+                        {% if item.tags %}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            {% for tag in item.tags %}
+                            <span class="px-2 py-0.5 text-[10px] rounded bg-code-border/40 text-code-text">{{ tag.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-sm text-code-muted p-2">No failed runs.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let autoRefreshInterval = null;
+const AUTO_REFRESH_KEY = 'pyrunner_tasks_board_auto_refresh';
+
+function startAutoRefresh() {
+    if (!autoRefreshInterval) {
+        autoRefreshInterval = setInterval(function() {
+            window.location.reload();
+        }, 5000);
+    }
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const checkbox = document.getElementById('auto-refresh');
+    const isEnabled = localStorage.getItem(AUTO_REFRESH_KEY) === 'true';
+    checkbox.checked = isEnabled;
+    if (isEnabled) startAutoRefresh();
+
+    checkbox.addEventListener('change', function() {
+        if (this.checked) {
+            localStorage.setItem(AUTO_REFRESH_KEY, 'true');
+            startAutoRefresh();
+        } else {
+            localStorage.setItem(AUTO_REFRESH_KEY, 'false');
+            stopAutoRefresh();
+        }
+    });
+});
+</script>
+{% endblock %}

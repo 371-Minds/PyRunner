@@ -229,6 +229,12 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
         run.status = Run.Status.RUNNING
         run.started_at = timezone.now()
         run.save(update_fields=["status", "started_at"])
+        try:
+            from core.services.trello_service import TrelloService
+
+            TrelloService.sync_run_status(run)
+        except Exception as e:
+            logger.debug(f"Trello running sync skipped for run {run.id}: {e}")
 
         # Validate environment
         try:
@@ -344,6 +350,14 @@ def execute_run(run: Run, webhook_data: dict | None = None) -> None:
 
         # Always save the run state
         run.save()
+
+        # Sync final state to Trello (best-effort)
+        try:
+            from core.services.trello_service import TrelloService
+
+            TrelloService.sync_run_status(run)
+        except Exception as e:
+            logger.debug(f"Trello final sync skipped for run {run.id}: {e}")
 
         # Cleanup temporary file
         if script_file_path is not None:

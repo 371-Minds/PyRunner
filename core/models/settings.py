@@ -315,6 +315,55 @@ class GlobalSettings(models.Model):
         help_text="Size of last backup in bytes",
     )
 
+    # Trello Integration
+    trello_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable Trello task sync for run lifecycle states",
+    )
+    trello_api_key_encrypted = models.TextField(
+        blank=True,
+        help_text="Trello API key (encrypted)",
+    )
+    trello_token_encrypted = models.TextField(
+        blank=True,
+        help_text="Trello token (encrypted)",
+    )
+    trello_board_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Target Trello board ID",
+    )
+    trello_list_queued_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Trello list ID for queued runs",
+    )
+    trello_list_running_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Trello list ID for running runs",
+    )
+    trello_list_success_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Trello list ID for successful runs",
+    )
+    trello_list_failed_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Trello list ID for failed/timeout/cancelled runs",
+    )
+    trello_last_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When Trello sync last succeeded",
+    )
+    trello_last_sync_error = models.TextField(
+        blank=True,
+        default="",
+        help_text="Last Trello sync error message",
+    )
+
     class Meta:
         db_table = "global_settings"
         verbose_name = "global settings"

@@ -106,6 +106,14 @@ def queue_script_run(run: Run, webhook_data: dict | None = None) -> str:
     run.task_id = task_id
     run.save(update_fields=["task_id"])
 
+    # Sync queued state to Trello (best-effort)
+    try:
+        from core.services.trello_service import TrelloService
+
+        TrelloService.sync_run_status(run)
+    except Exception as e:
+        logger.debug(f"Trello queue sync skipped for run {run.id}: {e}")
+
     logger.info(f"Queued Run {run.id} as task {task_id}")
 
     return task_id

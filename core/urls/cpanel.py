@@ -101,6 +101,8 @@ from core.views.api_tokens import (
 from core.views.tasks import (
     tasks_view,
     tasks_api_view,
+    tasks_board_view,
+    tasks_board_api_view,
     task_cancel_view,
     task_force_stop_view,
 )
@@ -108,6 +110,8 @@ from core.views.services import (
     services_view,
     s3_settings_view,
     s3_test_connection_view,
+    trello_settings_view,
+    trello_test_connection_view,
 )
 
 app_name = "cpanel"
@@ -142,6 +146,8 @@ urlpatterns = [
     # Tasks
     path("tasks/", tasks_view, name="tasks"),
     path("api/tasks/", tasks_api_view, name="tasks_api"),
+    path("tasks/board/", tasks_board_view, name="tasks_board"),
+    path("api/tasks/board/", tasks_board_api_view, name="tasks_board_api"),
     path("tasks/<str:task_id>/cancel/", task_cancel_view, name="task_cancel"),
     path("tasks/<str:task_id>/force-stop/", task_force_stop_view, name="task_force_stop"),
 
@@ -229,4 +235,6 @@ urlpatterns = [
     path("services/", services_view, name="services"),
     path("services/s3/", s3_settings_view, name="s3_settings"),
     path("services/s3/test/", s3_test_connection_view, name="s3_test_connection"),
+    path("services/trello/", trello_settings_view, name="trello_settings"),
+    path("services/trello/test/", trello_test_connection_view, name="trello_test_connection"),
 ]

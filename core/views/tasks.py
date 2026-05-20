@@ -7,6 +7,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
 
+from core.models import Tag
 from core.services.task_service import TaskService
 
 
@@ -98,6 +99,60 @@ def tasks_api_view(request: HttpRequest) -> JsonResponse:
         "queued_tasks": queued_data,
         "stuck_count": len(stuck_tasks),
         "stuck_tasks": stuck_data,
+    })
+
+
+def _serialize_board_column(items: list[dict]) -> list[dict]:
+    """Convert board items to JSON-safe payload."""
+    result = []
+    for item in items:
+        result.append({
+            "id": item.get("id"),
+            "run_id": item.get("run_id"),
+            "task_id": item.get("task_id"),
+            "script_name": item.get("script_name"),
+            "script_id": item.get("script_id"),
+            "status": item.get("status"),
+            "type": item.get("type"),
+            "duration_display": item.get("duration_display"),
+            "queued_at": item.get("queued_at").isoformat() if item.get("queued_at") else None,
+            "created_at": item.get("created_at").isoformat() if item.get("created_at") else None,
+            "started_at": item.get("started_at").isoformat() if item.get("started_at") else None,
+            "ended_at": item.get("ended_at").isoformat() if item.get("ended_at") else None,
+            "tags": item.get("tags", []),
+        })
+    return result
+
+
+@login_required
+def tasks_board_view(request: HttpRequest) -> HttpResponse:
+    """
+    Kanban board for task/run visualization.
+    """
+    project_tag = request.GET.get("project", "")
+    board = TaskService.get_kanban_board(tag_id=project_tag or None)
+    tags = Tag.objects.all().order_by("name")
+
+    context = {
+        "board": board,
+        "tags": tags,
+        "project_tag": project_tag,
+    }
+    return render(request, "cpanel/tasks_board.html", context)
+
+
+@login_required
+def tasks_board_api_view(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for board auto-refresh data.
+    """
+    project_tag = request.GET.get("project", "")
+    board = TaskService.get_kanban_board(tag_id=project_tag or None)
+    return JsonResponse({
+        "queued": _serialize_board_column(board["queued"]),
+        "running": _serialize_board_column(board["running"]),
+        "success": _serialize_board_column(board["success"]),
+        "failed": _serialize_board_column(board["failed"]),
     })
 
 

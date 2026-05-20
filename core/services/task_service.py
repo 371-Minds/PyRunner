@@ -290,6 +290,12 @@ class TaskService:
                 run.ended_at = timezone.now()
                 run.stderr = (run.stderr or "") + "\n[Task cancelled by user]"
                 run.save(update_fields=["status", "ended_at", "stderr"])
+                try:
+                    from core.services.trello_service import TrelloService
+
+                    TrelloService.sync_run_status(run)
+                except Exception as e:
+                    logger.debug(f"Trello sync skipped for cancelled run {run.id}: {e}")
 
             return True, "Task cancelled successfully"
 
@@ -331,6 +337,12 @@ class TaskService:
                 run.ended_at = timezone.now()
                 run.stderr = (run.stderr or "") + "\n[Task forcefully stopped by user]"
                 run.save(update_fields=["status", "ended_at", "stderr"])
+                try:
+                    from core.services.trello_service import TrelloService
+
+                    TrelloService.sync_run_status(run)
+                except Exception as e:
+                    logger.debug(f"Trello sync skipped for force-stopped run {run.id}: {e}")
                 return True, (
                     "Run marked as cancelled. Note: The underlying process may "
                     "continue until it times out."
@@ -346,6 +358,12 @@ class TaskService:
                 pending_run.status = Run.Status.CANCELLED
                 pending_run.ended_at = timezone.now()
                 pending_run.save(update_fields=["status", "ended_at"])
+                try:
+                    from core.services.trello_service import TrelloService
+
+                    TrelloService.sync_run_status(pending_run)
+                except Exception as e:
+                    logger.debug(f"Trello sync skipped for pending cancelled run {pending_run.id}: {e}")
                 return True, "Pending run cancelled successfully"
 
             return False, "No running or pending task found with this ID"
@@ -368,3 +386,84 @@ class TaskService:
         hours = minutes // 60
         mins = minutes % 60
         return f"{hours}h {mins}m"
+
+    @classmethod
+    def get_kanban_board(
+        cls,
+        tag_id: str | None = None,
+        per_column: int = 50,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Build board-ready task data grouped into Kanban columns.
+
+        Columns:
+        - queued: pending queue items (OrmQ)
+        - running: active Run records
+        - success: successful Run records
+        - failed: failed/timeout/cancelled Run records
+        """
+        from core.models import Run
+
+        queue_items = cls.get_queued_tasks()
+        queued: list[dict[str, Any]] = []
+        for item in queue_items:
+            linked_run = item.get("linked_run")
+            script = linked_run.script if linked_run else None
+            script_tags = list(script.tags.all()) if script else []
+
+            if tag_id and script:
+                if not any(str(tag.id) == tag_id for tag in script_tags):
+                    continue
+            elif tag_id and not script:
+                continue
+
+            queued.append({
+                "id": item["id"],
+                "task_id": item["id"],
+                "state": "queued",
+                "script_name": script.name if script else item.get("name", "System Task"),
+                "script_id": str(script.id) if script else None,
+                "run_id": str(linked_run.id) if linked_run else None,
+                "type": item.get("type", "system"),
+                "queued_at": item.get("queued_at"),
+                "status": "queued",
+                "tags": [{"id": str(tag.id), "name": tag.name, "color": tag.color} for tag in script_tags],
+            })
+
+            if len(queued) >= per_column:
+                break
+
+        runs_qs = Run.objects.select_related("script").prefetch_related("script__tags")
+        if tag_id:
+            runs_qs = runs_qs.filter(script__tags__id=tag_id)
+
+        running_qs = runs_qs.filter(status=Run.Status.RUNNING).order_by("-created_at")[:per_column]
+        success_qs = runs_qs.filter(status=Run.Status.SUCCESS).order_by("-created_at")[:per_column]
+        failed_qs = runs_qs.filter(
+            status__in=[Run.Status.FAILED, Run.Status.TIMEOUT, Run.Status.CANCELLED]
+        ).order_by("-created_at")[:per_column]
+
+        def serialize_run(run: Run) -> dict[str, Any]:
+            tags = [{"id": str(tag.id), "name": tag.name, "color": tag.color} for tag in run.script.tags.all()]
+            return {
+                "id": str(run.id),
+                "run_id": str(run.id),
+                "task_id": run.task_id or "",
+                "state": run.status,
+                "script_name": run.script.name,
+                "script_id": str(run.script.id),
+                "type": "script_run",
+                "status": run.status,
+                "created_at": run.created_at,
+                "started_at": run.started_at,
+                "ended_at": run.ended_at,
+                "duration_display": run.duration_display,
+                "tags": tags,
+            }
+
+        return {
+            "queued": queued,
+            "running": [serialize_run(run) for run in running_qs],
+            "success": [serialize_run(run) for run in success_qs],
+            "failed": [serialize_run(run) for run in failed_qs],
+        }

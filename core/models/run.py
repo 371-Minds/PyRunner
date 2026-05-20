@@ -94,6 +94,13 @@ class Run(models.Model):
         help_text="django-q2 task ID for tracking async execution",
     )
 
+    trello_card_id = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Trello card ID for synced Kanban tracking",
+    )
+
     # How this run was triggered
     trigger_type = models.CharField(
         max_length=20,

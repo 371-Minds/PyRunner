@@ -205,6 +205,121 @@
             </div>
         </div>
 
+        <!-- Trello Service Card -->
+        <div class="bg-code-surface border border-code-border rounded-xl overflow-hidden mb-6">
+            <div class="p-6 border-b border-code-border">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 bg-code-blue/20 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-code-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2zm3 3v8m7-8v4"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-semibold text-code-text">Trello</h2>
+                            <p class="text-sm text-code-muted">Sync run lifecycle to Trello Kanban lists</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center space-x-3">
+                        {% if trello_status.enabled and trello_status.configured %}
+                        <span class="px-3 py-1 bg-code-green/20 text-code-green text-sm font-medium rounded-full flex items-center">
+                            <span class="w-2 h-2 bg-code-green rounded-full mr-2"></span>
+                            Active
+                        </span>
+                        {% elif trello_status.configured %}
+                        <span class="px-3 py-1 bg-code-yellow/20 text-code-yellow text-sm font-medium rounded-full flex items-center">
+                            <span class="w-2 h-2 bg-code-yellow rounded-full mr-2"></span>
+                            Configured (Disabled)
+                        </span>
+                        {% else %}
+                        <span class="px-3 py-1 bg-code-muted/20 text-code-muted text-sm font-medium rounded-full flex items-center">
+                            <span class="w-2 h-2 bg-code-muted rounded-full mr-2"></span>
+                            Not Configured
+                        </span>
+                        {% endif %}
+
+                        <button type="button"
+                                onclick="toggleTrelloConfig()"
+                                class="p-2 text-code-muted hover:text-code-text transition-colors">
+                            <svg id="trello-chevron" class="w-5 h-5 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="trello-config" class="hidden">
+                <form method="post" action="{% url 'cpanel:trello_settings' %}" class="p-6">
+                    {% csrf_token %}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_api_key.label }}</label>
+                            {{ trello_form.trello_api_key }}
+                            {% if settings.trello_api_key_encrypted %}
+                            <p class="mt-1 text-xs text-code-green">API key is configured</p>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_token.label }}</label>
+                            {{ trello_form.trello_token }}
+                            {% if settings.trello_token_encrypted %}
+                            <p class="mt-1 text-xs text-code-green">Token is configured</p>
+                            {% endif %}
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_board_id.label }}</label>
+                            {{ trello_form.trello_board_id }}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_list_queued_id.label }}</label>
+                            {{ trello_form.trello_list_queued_id }}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_list_running_id.label }}</label>
+                            {{ trello_form.trello_list_running_id }}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_list_success_id.label }}</label>
+                            {{ trello_form.trello_list_success_id }}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-code-text mb-2">{{ trello_form.trello_list_failed_id.label }}</label>
+                            {{ trello_form.trello_list_failed_id }}
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-6 mb-6 p-4 bg-code-bg rounded-lg">
+                        <label class="flex items-center cursor-pointer">
+                            {{ trello_form.trello_enabled }}
+                            <span class="ml-2 text-sm text-code-text">{{ trello_form.trello_enabled.label }}</span>
+                        </label>
+                    </div>
+
+                    {% if trello_status.last_error %}
+                    <div class="mb-4 p-3 bg-code-red/10 border border-code-red/30 rounded-lg">
+                        <p class="text-xs text-code-red">{{ trello_status.last_error }}</p>
+                    </div>
+                    {% endif %}
+
+                    <div class="flex items-center space-x-4">
+                        <button type="submit" class="px-6 py-2 bg-code-accent hover:bg-code-accent/90 text-white font-semibold rounded-lg transition-colors">
+                            Save Settings
+                        </button>
+                        <button type="button"
+                                onclick="testTrelloConnection()"
+                                id="test-trello-btn"
+                                class="px-6 py-2 bg-code-surface border border-code-border hover:border-code-accent text-code-text rounded-lg transition-colors">
+                            Test Connection
+                        </button>
+                    </div>
+                </form>
+
+                <div id="trello-test-result" class="hidden mx-8 mb-6 p-4 rounded-lg"></div>
+            </div>
+        </div>
+
         <!-- Future Services Placeholder -->
         <div class="bg-code-surface/50 border border-code-border border-dashed rounded-xl p-8 text-center">
             <div class="w-12 h-12 bg-code-muted/10 rounded-lg flex items-center justify-center mx-auto mb-4">
@@ -322,10 +437,56 @@ function setPreset(provider) {
     }
 }
 
+function toggleTrelloConfig() {
+    const config = document.getElementById('trello-config');
+    const chevron = document.getElementById('trello-chevron');
+    config.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-180');
+}
+
+function testTrelloConnection() {
+    const btn = document.getElementById('test-trello-btn');
+    const resultDiv = document.getElementById('trello-test-result');
+    btn.disabled = true;
+    btn.textContent = 'Testing...';
+    resultDiv.classList.add('hidden');
+
+    fetch('{% url "cpanel:trello_test_connection" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json',
+        },
+    })
+    .then(response => response.json())
+    .then(data => {
+        resultDiv.classList.remove('hidden');
+        if (data.success) {
+            resultDiv.className = 'mx-8 mb-6 p-4 rounded-lg bg-code-green/10 border border-code-green text-code-green';
+            resultDiv.innerHTML = '<span>' + escapeHtml(data.message) + '</span>';
+        } else {
+            resultDiv.className = 'mx-8 mb-6 p-4 rounded-lg bg-code-red/10 border border-code-red text-code-red';
+            resultDiv.innerHTML = '<span>' + escapeHtml(data.error) + '</span>';
+        }
+    })
+    .catch(error => {
+        resultDiv.classList.remove('hidden');
+        resultDiv.className = 'mx-8 mb-6 p-4 rounded-lg bg-code-red/10 border border-code-red text-code-red';
+        resultDiv.textContent = 'Error: ' + escapeHtml(error.message);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Test Connection';
+    });
+}
+
 // Auto-expand if form has errors or if not configured
 document.addEventListener('DOMContentLoaded', function() {
     {% if s3_form.errors or not s3_status.configured %}
     toggleS3Config();
+    {% endif %}
+    {% if trello_form.errors or not trello_status.configured %}
+    toggleTrelloConfig();
     {% endif %}
 });
 </script>
