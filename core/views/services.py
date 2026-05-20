@@ -12,9 +12,10 @@ from django.views.decorators.http import require_POST
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from core.models import GlobalSettings
-from core.forms import S3SettingsForm
+from core.forms import S3SettingsForm, TrelloSettingsForm
 from core.services.s3_service import S3Service
 from core.services.encryption_service import EncryptionService
+from core.services.trello_service import TrelloService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ def services_view(request: HttpRequest) -> HttpResponse:
     settings = GlobalSettings.get_settings()
     s3_form = S3SettingsForm(instance=settings)
     s3_status = S3Service.get_status()
+    trello_form = TrelloSettingsForm(instance=settings)
+    trello_status = TrelloService.get_status()
 
     return render(
         request,
@@ -39,6 +42,8 @@ def services_view(request: HttpRequest) -> HttpResponse:
             "settings": settings,
             "s3_form": s3_form,
             "s3_status": s3_status,
+            "trello_form": trello_form,
+            "trello_status": trello_status,
         },
     )
 
@@ -124,3 +129,44 @@ def s3_test_connection_view(request: HttpRequest) -> JsonResponse:
                 "error": str(e),
             }
         )
+
+
+@login_required
+@superuser_required
+@require_POST
+def trello_settings_view(request: HttpRequest) -> HttpResponse:
+    """Update Trello integration settings."""
+    settings = GlobalSettings.get_settings()
+    form = TrelloSettingsForm(request.POST, instance=settings)
+
+    if form.is_valid():
+        form.save(settings)
+        messages.success(request, "Trello settings saved successfully.")
+    else:
+        for field, errors in form.errors.items():
+            for error in errors:
+                messages.error(request, f"{field}: {error}")
+
+    return redirect("cpanel:services")
+
+
+@login_required
+@superuser_required
+@require_POST
+def trello_test_connection_view(request: HttpRequest) -> JsonResponse:
+    """Test Trello API connectivity with saved credentials."""
+    try:
+        success, message = TrelloService.test_connection()
+        return JsonResponse(
+            {
+                "success": success,
+                "message": message if success else None,
+                "error": message if not success else None,
+            }
+        )
+    except Exception:
+        logger.exception("Trello connection test failed")
+        return JsonResponse({
+            "success": False,
+            "error": "Trello connection test failed. Check server logs for details.",
+        })

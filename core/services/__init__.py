@@ -11,6 +11,7 @@ from .system_info_service import SystemInfoService
 from .datastore_service import DatastoreService
 from .s3_service import S3Service, S3ServiceError
 from .backup_schedule_service import BackupScheduleService
+from .trello_service import TrelloService
 
 __all__ = [
     "ScheduleService",
@@ -24,4 +25,5 @@ __all__ = [
     "S3Service",
     "S3ServiceError",
     "BackupScheduleService",
+    "TrelloService",
 ]

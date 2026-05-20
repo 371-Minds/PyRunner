@@ -13,7 +13,9 @@ A self-hosted Python script automation platform. Upload a script, schedule it, m
 - **Flexible Scheduling** — Run scripts manually, at intervals, or daily at specific times
 - **Virtual Environments** — Isolated Python environments with custom pip packages per script
 - **Run History & Logs** — Track every execution with stdout/stderr capture
+- **Kanban Task Board** — Visualize queued, running, and completed runs in a Trello-style board
 - **Secrets Management** — Store encrypted environment variables and secrets
+- **Trello Sync (Optional)** — Mirror run lifecycle states to mapped Trello lists
 - **Notifications** — Get alerts via email, webhook, or Telegram on script completion/failure
 - **Magic Link Auth** — Passwordless authentication via email
 - **Single Container** — Deploy with one Docker command
