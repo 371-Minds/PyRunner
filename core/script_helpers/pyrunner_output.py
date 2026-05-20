@@ -72,6 +72,11 @@ def set_output(key: str, value: Any) -> None:
 
     The value is accumulated in memory and written to the output file on exit.
     If ``PYRUNNER_OUTPUT_PATH`` is not set (e.g. running locally), this is a no-op.
+
+    .. note::
+        This function is **not thread-safe**.  If your script uses threads or
+        processes and multiple threads call ``set_output`` concurrently, you
+        should protect calls with a ``threading.Lock``.
     """
     _ensure_atexit()
     _output_data[key] = value

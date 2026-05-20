@@ -530,8 +530,10 @@ def deliver_callback_task(run_id: str) -> dict:
             if attempt == max_attempts:
                 return {"success": False, "error": str(e)}
 
-        # Exponential back-off: 2s, 4s, 8s
-        time.sleep(2 ** attempt)
+        # Exponential back-off before next retry: 2s after attempt 1, 4s after attempt 2.
+        # No sleep after the final attempt.
+        if attempt < max_attempts:
+            time.sleep(2 ** attempt)
 
     return {"success": False, "error": "Max retries exceeded"}
 

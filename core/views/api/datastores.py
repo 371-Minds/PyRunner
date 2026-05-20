@@ -26,7 +26,7 @@ DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
 
 # Datastore name validation
-_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,100}$')
+VALID_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,100}$')
 
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ def _create_datastore(request: HttpRequest) -> JsonResponse:
         return add_cors_headers(response, "GET, POST, OPTIONS")
 
     name = body.get("name", "").strip()
-    if not name or not _VALID_NAME_RE.match(name):
+    if not name or not VALID_NAME_PATTERN.match(name):
         response = JsonResponse(
             {
                 "error": {

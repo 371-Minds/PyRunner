@@ -8,6 +8,7 @@ It is designed to be called from django-q2 async tasks.
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import traceback
@@ -101,9 +102,11 @@ def _build_script_environment(
         env["PYRUNNER_INPUT"] = json.dumps(inputs)
         env["PYRUNNER_CONTEXT"] = json.dumps(context)
 
-        # Convenience: individual INPUT_<KEY> vars (strings only)
+        # Convenience: individual INPUT_<KEY> vars (strings only).
+        # Sanitize key: uppercase, replace all non-alphanumeric chars with underscore.
+        _non_word_re = re.compile(r'[^A-Z0-9]')
         for k, v in inputs.items():
-            safe_key = k.upper().replace("-", "_").replace(" ", "_")
+            safe_key = _non_word_re.sub("_", k.upper())
             env[f"INPUT_{safe_key}"] = str(v)
 
         # Agent traceability vars

@@ -238,9 +238,9 @@ def trigger_script(request: HttpRequest, script_id: str) -> JsonResponse:
             )
             return add_cors_headers(response, "POST, OPTIONS")
 
-    # Concurrent run limit per token — count only API-triggered runs currently
-    # in PENDING or RUNNING state that were initiated via the API.
-    token = request.api_token
+    # Deployment-wide concurrent API-triggered run limit — prevents runaway
+    # agents from flooding the worker queue.  Without a token FK on Run we
+    # cannot scope this per-token; it acts as a global API safeguard.
     concurrent = Run.objects.filter(
         trigger_type=Run.TriggerType.API,
         status__in=[Run.Status.PENDING, Run.Status.RUNNING],

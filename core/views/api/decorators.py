@@ -36,7 +36,7 @@ def api_token_required(view_func):
     and attaches the token to the request for view access.
 
     Token can be provided via:
-    - Authorization: ******
+    - Authorization: Bearer <token>
     - X-API-Key: <token>
     """
     @wraps(view_func)
@@ -182,7 +182,7 @@ def _extract_token(request):
     Extract API token from request headers.
 
     Supports:
-    - Authorization: ******
+    - Authorization: Bearer <token>
     - X-API-Key: <token>
     """
     # Try Authorization: ******
