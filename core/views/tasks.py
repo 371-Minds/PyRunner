@@ -129,7 +129,7 @@ def tasks_board_view(request: HttpRequest) -> HttpResponse:
     """
     Kanban board for task/run visualization.
     """
-    project_tag = str(request.GET.get("project", "") or "")
+    project_tag = request.GET.get("project", "")
     board = TaskService.get_kanban_board(tag_id=project_tag or None)
     tags = [
         {"id": str(tag.id), "name": tag.name}

@@ -18,8 +18,15 @@ class TrelloService:
 
     API_BASE = "https://api.trello.com/1"
     REQUEST_TIMEOUT = 15
-    # Limit external API error payload surfaced in logs/settings to avoid noisy output.
+    # Limit external API error payload to 500 chars to keep logs/settings readable
+    # while preserving enough context for debugging.
     ERROR_PREVIEW_LIMIT = 500
+
+    @classmethod
+    def _sanitize_error_preview(cls, text: str) -> str:
+        """Return a compact single-line preview safe for logging/storage."""
+        compact = " ".join((text or "").split())
+        return compact[:cls.ERROR_PREVIEW_LIMIT]
 
     @classmethod
     def _get_credentials(cls) -> tuple[str, str]:
@@ -154,7 +161,7 @@ class TrelloService:
             return False
 
         target_list_id = cls._get_target_list_id(run)
-        card_name = f"{run.script.name} [{run.status.upper()}]"
+        card_name = f"{run.script.name} [{str(run.status).upper()}]"
         card_desc = (
             f"Run ID: {run.id}\n"
             f"Script: {run.script.name}\n"
@@ -196,7 +203,7 @@ class TrelloService:
                 if not create_response.ok:
                     error = (
                         f"Trello card sync failed ({create_response.status_code}): "
-                        f"{create_response.text[:cls.ERROR_PREVIEW_LIMIT]}"
+                        f"{cls._sanitize_error_preview(create_response.text)}"
                     )
                     cls._mark_sync_error(error)
                     logger.error(error)
