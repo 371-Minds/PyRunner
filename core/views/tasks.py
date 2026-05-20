@@ -129,9 +129,12 @@ def tasks_board_view(request: HttpRequest) -> HttpResponse:
     """
     Kanban board for task/run visualization.
     """
-    project_tag = request.GET.get("project", "")
+    project_tag = str(request.GET.get("project", "") or "")
     board = TaskService.get_kanban_board(tag_id=project_tag or None)
-    tags = Tag.objects.all().order_by("name")
+    tags = [
+        {"id": str(tag.id), "name": tag.name}
+        for tag in Tag.objects.all().order_by("name")
+    ]
 
     context = {
         "board": board,

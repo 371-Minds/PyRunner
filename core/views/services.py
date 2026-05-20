@@ -164,6 +164,9 @@ def trello_test_connection_view(request: HttpRequest) -> JsonResponse:
                 "error": message if not success else None,
             }
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Trello connection test failed")
-        return JsonResponse({"success": False, "error": str(e)})
+        return JsonResponse({
+            "success": False,
+            "error": "Trello connection test failed. Check server logs for details.",
+        })

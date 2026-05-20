@@ -18,6 +18,8 @@ class TrelloService:
 
     API_BASE = "https://api.trello.com/1"
     REQUEST_TIMEOUT = 15
+    # Limit external API error payload surfaced in logs/settings to avoid noisy output.
+    ERROR_PREVIEW_LIMIT = 500
 
     @classmethod
     def _get_credentials(cls) -> tuple[str, str]:
@@ -111,8 +113,9 @@ class TrelloService:
                     return False, f"Failed to access list {list_id} ({list_res.status_code})"
 
             return True, "Successfully connected to Trello board and lists"
-        except Exception as e:
-            return False, f"Trello connection failed: {e}"
+        except Exception:
+            logger.exception("Trello connection test failed")
+            return False, "Trello connection failed. Check configuration and try again."
 
     @classmethod
     def _get_target_list_id(cls, run: Run) -> str:
@@ -161,6 +164,7 @@ class TrelloService:
         )
 
         try:
+            should_create_card = False
             if run.trello_card_id:
                 response = cls._request(
                     "PUT",
@@ -175,7 +179,11 @@ class TrelloService:
                 if not response.ok:
                     run.trello_card_id = ""
                     run.save(update_fields=["trello_card_id"])
-            if not run.trello_card_id:
+                    should_create_card = True
+            else:
+                should_create_card = True
+
+            if should_create_card:
                 create_response = cls._request(
                     "POST",
                     "/cards",
@@ -188,7 +196,7 @@ class TrelloService:
                 if not create_response.ok:
                     error = (
                         f"Trello card sync failed ({create_response.status_code}): "
-                        f"{create_response.text[:500]}"
+                        f"{create_response.text[:cls.ERROR_PREVIEW_LIMIT]}"
                     )
                     cls._mark_sync_error(error)
                     logger.error(error)
