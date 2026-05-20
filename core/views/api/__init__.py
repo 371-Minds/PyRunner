@@ -7,6 +7,7 @@ from .datastores import (
     get_datastore,
     list_entries,
     get_entry,
+    clear_datastore_entries,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "get_datastore",
     "list_entries",
     "get_entry",
+    "clear_datastore_entries",
 ]

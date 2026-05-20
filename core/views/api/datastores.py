@@ -2,14 +2,22 @@
 API views for datastore access.
 """
 
+import json
 import logging
+import re
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from core.models import DataStore, DataStoreEntry
-from core.views.api.decorators import api_token_required, add_cors_headers
+from core.views.api.decorators import (
+    api_token_required,
+    require_scope,
+    write_rate_limit,
+    add_cors_headers,
+    MAX_PAYLOAD_BYTES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,33 +25,38 @@ logger = logging.getLogger(__name__)
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
 
+# Datastore name validation
+_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,100}$')
+
+
+# ── Read endpoints ────────────────────────────────────────────────────────────
 
 @csrf_exempt
-@require_http_methods(["GET", "OPTIONS"])
+@require_http_methods(["GET", "POST", "OPTIONS"])
 @api_token_required
 def list_datastores(request: HttpRequest) -> JsonResponse:
     """
-    List all datastores accessible to the token.
+    List all datastores, or create a new one.
 
-    GET /api/v1/datastores/
+    GET  /api/v1/datastores/  — requires scope_datastores_read
+    POST /api/v1/datastores/  — requires scope_datastores_write
 
-    Returns:
-        {
-            "datastores": [
-                {
-                    "name": "store_name",
-                    "description": "...",
-                    "entry_count": 42,
-                    "created_at": "2026-01-15T10:30:00Z",
-                    "updated_at": "2026-02-10T14:22:00Z"
-                }
-            ],
-            "count": 1
-        }
+    POST body: {"name": "my_store", "description": "optional"}
     """
     if request.method == "OPTIONS":
         response = JsonResponse({})
-        return add_cors_headers(response)
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    if request.method == "POST":
+        return _create_datastore(request)
+
+    # GET — list
+    if not request.api_token.scope_datastores_read:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_read"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
 
     token = request.api_token
 
@@ -69,26 +82,78 @@ def list_datastores(request: HttpRequest) -> JsonResponse:
     }
 
     response = JsonResponse(data)
-    return add_cors_headers(response)
+    return add_cors_headers(response, "GET, POST, OPTIONS")
+
+
+def _create_datastore(request: HttpRequest) -> JsonResponse:
+    """Create a new datastore (POST /api/v1/datastores/)."""
+    if not request.api_token.scope_datastores_write:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_write"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    if len(request.body) > MAX_PAYLOAD_BYTES:
+        response = JsonResponse(
+            {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body exceeds 1 MB limit"}},
+            status=413,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        response = JsonResponse(
+            {"error": {"code": "INVALID_JSON", "message": "Request body must be valid JSON"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    name = body.get("name", "").strip()
+    if not name or not _VALID_NAME_RE.match(name):
+        response = JsonResponse(
+            {
+                "error": {
+                    "code": "INVALID_NAME",
+                    "message": "name must be 1-100 characters: letters, digits, underscores, hyphens",
+                }
+            },
+            status=400,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    if DataStore.objects.filter(name=name).exists():
+        response = JsonResponse(
+            {"error": {"code": "CONFLICT", "message": f"Datastore '{name}' already exists"}},
+            status=409,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    ds = DataStore.objects.create(
+        name=name,
+        description=body.get("description", ""),
+    )
+    data = {
+        "name": ds.name,
+        "description": ds.description,
+        "entry_count": 0,
+        "created_at": ds.created_at.isoformat(),
+        "updated_at": ds.updated_at.isoformat(),
+    }
+    response = JsonResponse(data, status=201)
+    return add_cors_headers(response, "GET, POST, OPTIONS")
 
 
 @csrf_exempt
 @require_http_methods(["GET", "OPTIONS"])
 @api_token_required
+@require_scope("scope_datastores_read")
 def get_datastore(request: HttpRequest, name: str) -> JsonResponse:
     """
     Get datastore metadata.
 
     GET /api/v1/datastores/<name>/
-
-    Returns:
-        {
-            "name": "store_name",
-            "description": "...",
-            "entry_count": 42,
-            "created_at": "2026-01-15T10:30:00Z",
-            "updated_at": "2026-02-10T14:22:00Z"
-        }
     """
     if request.method == "OPTIONS":
         response = JsonResponse({})
@@ -96,7 +161,7 @@ def get_datastore(request: HttpRequest, name: str) -> JsonResponse:
 
     datastore = _get_authorized_datastore(request, name)
     if isinstance(datastore, JsonResponse):
-        return datastore  # Error response
+        return datastore
 
     data = {
         "name": datastore.name,
@@ -111,40 +176,35 @@ def get_datastore(request: HttpRequest, name: str) -> JsonResponse:
 
 
 @csrf_exempt
-@require_http_methods(["GET", "OPTIONS"])
+@require_http_methods(["GET", "POST", "OPTIONS"])
 @api_token_required
 def list_entries(request: HttpRequest, name: str) -> JsonResponse:
     """
-    List entries in a datastore with pagination.
+    List entries in a datastore (GET) or upsert a new entry (POST).
 
-    GET /api/v1/datastores/<name>/entries/
-    Query params:
-        - page: Page number (default: 1)
-        - page_size: Items per page (default: 50, max: 100)
+    GET  /api/v1/datastores/<name>/entries/  — requires scope_datastores_read
+    POST /api/v1/datastores/<name>/entries/  — requires scope_datastores_write
 
-    Returns:
-        {
-            "entries": [
-                {
-                    "key": "config",
-                    "value": {"retries": 3},
-                    "created_at": "2026-01-20T08:00:00Z",
-                    "updated_at": "2026-02-01T12:00:00Z"
-                }
-            ],
-            "count": 42,
-            "page": 1,
-            "page_size": 50,
-            "total_pages": 1
-        }
+    POST body: {"key": "my_key", "value": <any JSON>}
     """
     if request.method == "OPTIONS":
         response = JsonResponse({})
-        return add_cors_headers(response)
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    if request.method == "POST":
+        return _upsert_entry(request, name)
+
+    # GET
+    if not request.api_token.scope_datastores_read:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_read"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
 
     datastore = _get_authorized_datastore(request, name)
     if isinstance(datastore, JsonResponse):
-        return datastore  # Error response
+        return datastore
 
     # Parse pagination params
     try:
@@ -185,33 +245,118 @@ def list_entries(request: HttpRequest, name: str) -> JsonResponse:
     }
 
     response = JsonResponse(data)
-    return add_cors_headers(response)
+    return add_cors_headers(response, "GET, POST, OPTIONS")
 
 
-@csrf_exempt
-@require_http_methods(["GET", "OPTIONS"])
-@api_token_required
-def get_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
-    """
-    Get a single entry by key.
+def _upsert_entry(request: HttpRequest, name: str) -> JsonResponse:
+    """Upsert an entry (POST /api/v1/datastores/<name>/entries/)."""
+    if not request.api_token.scope_datastores_write:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_write"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
 
-    GET /api/v1/datastores/<name>/entries/<key>/
+    # Write rate limit check
+    from core.views.api.decorators import API_WRITE_RATE_LIMIT, API_RATE_WINDOW
+    from django.core.cache import cache
+    write_key = f"api_write_rate_{request.api_token.id}"
+    write_count = cache.get(write_key, 0)
+    if write_count >= API_WRITE_RATE_LIMIT:
+        response = JsonResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Write rate limit exceeded. Try again later."}},
+            status=429,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+    cache.set(write_key, write_count + 1, API_RATE_WINDOW)
 
-    Returns:
-        {
-            "key": "config",
-            "value": {"retries": 3},
-            "created_at": "2026-01-20T08:00:00Z",
-            "updated_at": "2026-02-01T12:00:00Z"
-        }
-    """
-    if request.method == "OPTIONS":
-        response = JsonResponse({})
-        return add_cors_headers(response)
+    if len(request.body) > MAX_PAYLOAD_BYTES:
+        response = JsonResponse(
+            {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body exceeds 1 MB limit"}},
+            status=413,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        response = JsonResponse(
+            {"error": {"code": "INVALID_JSON", "message": "Request body must be valid JSON"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    key = body.get("key", "")
+    if not key or not isinstance(key, str) or len(key) > 255:
+        response = JsonResponse(
+            {"error": {"code": "INVALID_KEY", "message": "key must be a non-empty string (max 255 chars)"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
+
+    if "value" not in body:
+        response = JsonResponse(
+            {"error": {"code": "MISSING_VALUE", "message": "value is required"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, POST, OPTIONS")
 
     datastore = _get_authorized_datastore(request, name)
     if isinstance(datastore, JsonResponse):
-        return datastore  # Error response
+        return datastore
+
+    import json as _json
+    value_json = _json.dumps(body["value"])
+    entry, created = DataStoreEntry.objects.update_or_create(
+        datastore=datastore,
+        key=key,
+        defaults={"value_json": value_json},
+    )
+
+    data = {
+        "key": entry.key,
+        "value": entry.get_value(),
+        "created_at": entry.created_at.isoformat(),
+        "updated_at": entry.updated_at.isoformat(),
+    }
+    response = JsonResponse(data, status=201 if created else 200)
+    return add_cors_headers(response, "GET, POST, OPTIONS")
+
+
+@csrf_exempt
+@require_http_methods(["GET", "PUT", "DELETE", "OPTIONS"])
+@api_token_required
+def get_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
+    """
+    Get, update, or delete a single entry by key.
+
+    GET    /api/v1/datastores/<name>/entries/<key>/  — requires scope_datastores_read
+    PUT    /api/v1/datastores/<name>/entries/<key>/  — requires scope_datastores_write
+    DELETE /api/v1/datastores/<name>/entries/<key>/  — requires scope_datastores_write
+
+    PUT body: {"value": <any JSON>}
+    """
+    if request.method == "OPTIONS":
+        response = JsonResponse({})
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    if request.method == "PUT":
+        return _update_entry(request, name, key)
+
+    if request.method == "DELETE":
+        return _delete_entry(request, name, key)
+
+    # GET
+    if not request.api_token.scope_datastores_read:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_read"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    datastore = _get_authorized_datastore(request, name)
+    if isinstance(datastore, JsonResponse):
+        return datastore
 
     try:
         entry = DataStoreEntry.objects.get(datastore=datastore, key=key)
@@ -220,7 +365,7 @@ def get_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
             {"error": {"code": "NOT_FOUND", "message": f"Entry '{key}' not found"}},
             status=404,
         )
-        return add_cors_headers(response)
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
 
     data = {
         "key": entry.key,
@@ -230,8 +375,118 @@ def get_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
     }
 
     response = JsonResponse(data)
-    return add_cors_headers(response)
+    return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
 
+
+def _update_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
+    """Update an existing entry's value (PUT)."""
+    if not request.api_token.scope_datastores_write:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_write"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    if len(request.body) > MAX_PAYLOAD_BYTES:
+        response = JsonResponse(
+            {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body exceeds 1 MB limit"}},
+            status=413,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        response = JsonResponse(
+            {"error": {"code": "INVALID_JSON", "message": "Request body must be valid JSON"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    if "value" not in body:
+        response = JsonResponse(
+            {"error": {"code": "MISSING_VALUE", "message": "value is required"}},
+            status=400,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    datastore = _get_authorized_datastore(request, name)
+    if isinstance(datastore, JsonResponse):
+        return datastore
+
+    try:
+        entry = DataStoreEntry.objects.get(datastore=datastore, key=key)
+    except DataStoreEntry.DoesNotExist:
+        response = JsonResponse(
+            {"error": {"code": "NOT_FOUND", "message": f"Entry '{key}' not found"}},
+            status=404,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    import json as _json
+    entry.value_json = _json.dumps(body["value"])
+    entry.save()
+
+    data = {
+        "key": entry.key,
+        "value": entry.get_value(),
+        "created_at": entry.created_at.isoformat(),
+        "updated_at": entry.updated_at.isoformat(),
+    }
+    response = JsonResponse(data)
+    return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+
+def _delete_entry(request: HttpRequest, name: str, key: str) -> JsonResponse:
+    """Delete an entry (DELETE)."""
+    if not request.api_token.scope_datastores_write:
+        response = JsonResponse(
+            {"error": {"code": "FORBIDDEN", "message": "Token does not have the required scope: scope_datastores_write"}},
+            status=403,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    datastore = _get_authorized_datastore(request, name)
+    if isinstance(datastore, JsonResponse):
+        return datastore
+
+    deleted_count, _ = DataStoreEntry.objects.filter(datastore=datastore, key=key).delete()
+    if deleted_count == 0:
+        response = JsonResponse(
+            {"error": {"code": "NOT_FOUND", "message": f"Entry '{key}' not found"}},
+            status=404,
+        )
+        return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+    response = JsonResponse({"deleted": True, "key": key})
+    return add_cors_headers(response, "GET, PUT, DELETE, OPTIONS")
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+@api_token_required
+@require_scope("scope_datastores_write")
+@write_rate_limit
+def clear_datastore_entries(request: HttpRequest, name: str) -> JsonResponse:
+    """
+    Delete all entries in a datastore.
+
+    POST /api/v1/datastores/<name>/clear/
+    """
+    if request.method == "OPTIONS":
+        response = JsonResponse({})
+        return add_cors_headers(response, "POST, OPTIONS")
+
+    datastore = _get_authorized_datastore(request, name)
+    if isinstance(datastore, JsonResponse):
+        return datastore
+
+    deleted_count, _ = DataStoreEntry.objects.filter(datastore=datastore).delete()
+    response = JsonResponse({"deleted": deleted_count, "datastore": name})
+    return add_cors_headers(response, "POST, OPTIONS")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_authorized_datastore(request: HttpRequest, name: str):
     """

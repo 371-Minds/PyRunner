@@ -102,6 +102,39 @@ class Run(models.Model):
         help_text="How this run was triggered",
     )
 
+    # Agent / AI automation fields
+    agent_id = models.CharField(
+        max_length=255,
+        blank=True,
+        db_index=True,
+        help_text="Identifier of the AI agent that triggered this run",
+    )
+    session_id = models.CharField(
+        max_length=255,
+        blank=True,
+        db_index=True,
+        help_text="Session/workflow identifier for grouping related runs",
+    )
+    trigger_script = models.ForeignKey(
+        Script,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="triggered_runs",
+        help_text="Script that triggered this run (for agent-orchestrated chaining)",
+    )
+    structured_output = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Structured JSON output written by the script via pyrunner_output helpers",
+    )
+    # Callback URL to POST completion event to (not persisted beyond task lifetime)
+    callback_url = models.URLField(
+        blank=True,
+        max_length=500,
+        help_text="URL to POST a completion event to when this run finishes",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

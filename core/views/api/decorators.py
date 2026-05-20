@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 API_RATE_LIMIT = getattr(settings, "API_RATE_LIMIT", 60)  # requests per minute
 API_RATE_WINDOW = 60  # seconds
 
+# Write endpoint rate limit (separate, lower bucket)
+API_WRITE_RATE_LIMIT = 30  # requests per minute
+
+# Maximum concurrent runs per token
+MAX_CONCURRENT_RUNS_PER_TOKEN = 5
+
+# Maximum payload size for API writes (1 MB)
+MAX_PAYLOAD_BYTES = 1_000_000
+
 
 def api_token_required(view_func):
     """
@@ -27,7 +36,7 @@ def api_token_required(view_func):
     and attaches the token to the request for view access.
 
     Token can be provided via:
-    - Authorization: Bearer <token>
+    - Authorization: ******
     - X-API-Key: <token>
     """
     @wraps(view_func)
@@ -87,15 +96,96 @@ def api_token_required(view_func):
     return wrapper
 
 
+def require_scope(scope: str):
+    """
+    Decorator factory that checks the token has the required scope.
+
+    Must be applied *after* @api_token_required (i.e., closer to the function),
+    so that request.api_token is already populated.
+
+    Usage::
+
+        @csrf_exempt
+        @require_http_methods(["GET"])
+        @api_token_required
+        @require_scope("scope_scripts")
+        def my_view(request):
+            ...
+    """
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapper(request, *args, **kwargs):
+            token = getattr(request, "api_token", None)
+            if token is None:
+                # Should not happen if @api_token_required is applied first
+                return JsonResponse(
+                    {"error": {"code": "UNAUTHORIZED", "message": "API token required"}},
+                    status=401,
+                )
+            if not getattr(token, scope, False):
+                logger.warning(
+                    f"Token '{token.name}' missing scope '{scope}' for "
+                    f"{request.method} {request.path}"
+                )
+                return JsonResponse(
+                    {
+                        "error": {
+                            "code": "FORBIDDEN",
+                            "message": f"Token does not have the required scope: {scope}",
+                        }
+                    },
+                    status=403,
+                )
+            return view_func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def write_rate_limit(view_func):
+    """
+    Additional rate limiter for write endpoints (30 req/min per token).
+
+    Must be applied after @api_token_required.
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        token = getattr(request, "api_token", None)
+        if token is None:
+            return JsonResponse(
+                {"error": {"code": "UNAUTHORIZED", "message": "API token required"}},
+                status=401,
+            )
+
+        write_key = f"api_write_rate_{token.id}"
+        write_count = cache.get(write_key, 0)
+
+        if write_count >= API_WRITE_RATE_LIMIT:
+            logger.warning(f"API write rate limit exceeded for token: {token.name}")
+            return JsonResponse(
+                {
+                    "error": {
+                        "code": "RATE_LIMITED",
+                        "message": "Write rate limit exceeded. Try again later.",
+                    }
+                },
+                status=429,
+            )
+
+        cache.set(write_key, write_count + 1, API_RATE_WINDOW)
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
 def _extract_token(request):
     """
     Extract API token from request headers.
 
     Supports:
-    - Authorization: Bearer <token>
+    - Authorization: ******
     - X-API-Key: <token>
     """
-    # Try Authorization: Bearer <token>
+    # Try Authorization: ******
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[7:]
@@ -104,7 +194,7 @@ def _extract_token(request):
     return request.headers.get("X-API-Key")
 
 
-def add_cors_headers(response):
+def add_cors_headers(response, methods: str = "GET, OPTIONS"):
     """
     Add CORS headers to API response.
 
@@ -114,7 +204,7 @@ def add_cors_headers(response):
     cors_origins = getattr(settings, "API_CORS_ORIGINS", "*")
 
     response["Access-Control-Allow-Origin"] = cors_origins
-    response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response["Access-Control-Allow-Methods"] = methods
     response["Access-Control-Allow-Headers"] = "Authorization, X-API-Key, Content-Type"
     response["Access-Control-Max-Age"] = "86400"
 
